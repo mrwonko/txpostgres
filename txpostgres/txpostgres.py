@@ -372,6 +372,14 @@ class RollbackFailed(Exception):
         return "<RollbackFailed, original error: %s>" % self.originalFailure
 
 
+def _closeCursorAndPassthrough(ret, cursor):
+    try:
+        cursor.close()
+    except:
+        log.err()
+
+    return ret
+
 class Connection(_PollingMixin):
     """
     A wrapper for a psycopg2 asynchronous connection.
@@ -518,7 +526,7 @@ class Connection(_PollingMixin):
         c = self.cursor()
         d = c.execute(*args, **kwargs)
         d.addCallback(lambda c: c.fetchall())
-        return d.addCallback(lambda ret: (c.close(), ret)[1])
+        return d.addBoth(_closeCursorAndPassthrough, c)
 
     def runOperation(self, *args, **kwargs):
         """
@@ -540,7 +548,7 @@ class Connection(_PollingMixin):
         c = self.cursor()
         d = c.execute(*args, **kwargs)
         d.addCallback(lambda _: None)
-        return d.addCallback(lambda ret: (c.close(), ret)[1])
+        return d.addBoth(_closeCursorAndPassthrough, c)
 
     def runInteraction(self, interaction, *args, **kwargs):
         """
@@ -609,17 +617,9 @@ class Connection(_PollingMixin):
             # otherwise reraise the original failure
             return e.addCallback(lambda _: f)
 
-        def closeCursorAndPassthrough(ret, cursor):
-            try:
-                cursor.close()
-            except:
-                log.err()
-
-            return ret
-
         d.addCallback(commitAndPassthrough, c)
         d.addErrback(rollbackAndPassthrough, c)
-        d.addBoth(closeCursorAndPassthrough, c)
+        d.addBoth(_closeCursorAndPassthrough, c)
 
         return d
 
